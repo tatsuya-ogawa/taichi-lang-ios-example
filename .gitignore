@@ -1,0 +1,9 @@
+.venv/
+.uv-cache/
+.ti-cache/
+.cache/
+build/
+__pycache__/
+*.egg-info
+.derived/
+*.xcuserstate
