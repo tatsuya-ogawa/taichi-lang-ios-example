@@ -10,6 +10,60 @@ import Combine
 import UIKit
 import CoreGraphics
 
+private protocol MNISTTrainingRunner: Sendable {
+    func train(
+        epochs: Int,
+        learningRate: Float,
+        lossThreshold: Float?,
+        progress: ((MNISTTrainingProgress) -> Void)?
+    ) throws -> MNISTTrainingSummary
+
+    func inferRandomTestSample() throws -> MNISTInferenceResult
+}
+
+extension MNISTMetalRunner: MNISTTrainingRunner {}
+extension MNISTMLXRunner: MNISTTrainingRunner {}
+extension MNISTMetalRunner: @unchecked Sendable {}
+extension MNISTMLXRunner: @unchecked Sendable {}
+
+private struct RunnerInitializationError: LocalizedError, Sendable {
+    let message: String
+
+    var errorDescription: String? {
+        message
+    }
+}
+
+enum MNISTTrainingBackend: String, CaseIterable, Identifiable {
+    case taichiMetal
+    case mlxCustomFunctionManual
+    case mlxCustomFunctionAdam
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .taichiMetal:
+            return "Taichi Metal"
+        case .mlxCustomFunctionManual:
+            return "MLX Custom Function (Manual SGD)"
+        case .mlxCustomFunctionAdam:
+            return "MLX Custom Function (Adam Optimizer)"
+        }
+    }
+
+    var note: String {
+        switch self {
+        case .taichiMetal:
+            return "Uses Taichi AOT-generated Metal kernels."
+        case .mlxCustomFunctionManual:
+            return "Uses MLX CustomFunction (Forward + VJP) with handwritten SGD updates."
+        case .mlxCustomFunctionAdam:
+            return "Uses MLX CustomFunction (Forward + VJP) with MLXOptimizers.Adam updates."
+        }
+    }
+}
+
 @MainActor
 final class MNISTViewModel: ObservableObject {
 
@@ -21,16 +75,53 @@ final class MNISTViewModel: ObservableObject {
     @Published var learningRate: Float = 0.001
     @Published var enableLossThreshold = true
     @Published var lossThreshold: Float = 0.10
+    @Published var trainingBackend: MNISTTrainingBackend = .taichiMetal
 
-    private let runnerResult: Result<MNISTMetalRunner, Error>
+    private let taichiRunnerResult: Result<MNISTMetalRunner, RunnerInitializationError>
+    private let mlxManualRunnerResult: Result<MNISTMLXRunner, RunnerInitializationError>
+    private let mlxAdamRunnerResult: Result<MNISTMLXRunner, RunnerInitializationError>
 
     init() {
-        runnerResult = Result { try MNISTMetalRunner() }
-        if case .failure(let error) = runnerResult {
-            output = "Initialization failed.\n\(error.localizedDescription)"
+        do {
+            taichiRunnerResult = .success(try MNISTMetalRunner())
+        } catch {
+            taichiRunnerResult = .failure(
+                RunnerInitializationError(message: error.localizedDescription)
+            )
+        }
+
+        do {
+            mlxManualRunnerResult = .success(
+                try MNISTMLXRunner(updateRule: .manualSGD)
+            )
+        } catch {
+            mlxManualRunnerResult = .failure(
+                RunnerInitializationError(message: error.localizedDescription)
+            )
+        }
+
+        do {
+            mlxAdamRunnerResult = .success(
+                try MNISTMLXRunner(updateRule: .adamOptimizer)
+            )
+        } catch {
+            mlxAdamRunnerResult = .failure(
+                RunnerInitializationError(message: error.localizedDescription)
+            )
+        }
+
+        if case .failure(let taichiError) = taichiRunnerResult,
+            case .failure(let mlxManualError) = mlxManualRunnerResult,
+            case .failure(let mlxAdamError) = mlxAdamRunnerResult
+        {
+            output = """
+            Initialization failed.
+            Taichi Metal: \(taichiError.localizedDescription)
+            MLX Custom Function (Manual): \(mlxManualError.localizedDescription)
+            MLX Custom Function (Adam): \(mlxAdamError.localizedDescription)
+            """
         }
     }
-    
 
     var epochsValidation: String? {
         if epochs < 1 { return "Must be at least 1" }
@@ -56,17 +147,21 @@ final class MNISTViewModel: ObservableObject {
     func train() {
         guard !isRunning else { return }
         let settings = resolveTrainingSettings()
+        let selectedBackend = trainingBackend
+        let runnerResult = selectedRunnerResult(for: selectedBackend)
         isRunning = true
         if let threshold = settings.lossThreshold {
             output = String(
-                format: "Training started... (epochs: %d, lr: %.4f, target loss: %.4f)",
+                format: "Training started... [%@] (epochs: %d, lr: %.4f, target loss: %.4f)",
+                selectedBackend.title,
                 settings.epochs,
                 settings.learningRate,
                 threshold
             )
         } else {
             output = String(
-                format: "Training started... (epochs: %d, lr: %.4f)",
+                format: "Training started... [%@] (epochs: %d, lr: %.4f)",
+                selectedBackend.title,
                 settings.epochs,
                 settings.learningRate
             )
@@ -74,12 +169,12 @@ final class MNISTViewModel: ObservableObject {
         inferenceImage = nil
         inferenceLabelText = ""
 
-        DispatchQueue.global(qos: .userInitiated).async { [runnerResult, settings] in
+        DispatchQueue.global(qos: .userInitiated).async { [runnerResult, selectedBackend, settings] in
             var text = ""
             var summary: MNISTTrainingSummary?
             switch runnerResult {
             case .failure(let error):
-                text = "Initialization failed.\n\(error.localizedDescription)"
+                text = "\(selectedBackend.title) initialization failed.\n\(error.localizedDescription)"
             case .success(let runner):
                 do {
                     let trained = try runner.train(
@@ -103,13 +198,14 @@ final class MNISTViewModel: ObservableObject {
                     let stopLine = trained.stoppedByLossThreshold ? "yes (loss threshold reached)" : "no"
                     text = String(
                         format: """
-                        Training finished.
+                        Training finished. [%@]
                         epochs: %d
                         final train loss: %.4f
                         final train acc: %.3f
                         test acc (300 samples): %.3f
                         stopped early: %@
                         """,
+                        selectedBackend.title,
                         trained.epochs,
                         trained.trainLoss,
                         trained.trainAccuracy,
@@ -124,7 +220,7 @@ final class MNISTViewModel: ObservableObject {
             DispatchQueue.main.async {
                 self.output = text
                 if summary != nil {
-                    self.runInference()
+                    self.runInference(backend: selectedBackend)
                 }
                 self.isRunning = false
             }
@@ -132,10 +228,17 @@ final class MNISTViewModel: ObservableObject {
     }
 
     func runInference() {
+        runInference(backend: trainingBackend)
+    }
+
+    private func runInference(backend: MNISTTrainingBackend) {
+        let runnerResult = selectedRunnerResult(for: backend)
         DispatchQueue.global(qos: .userInitiated).async { [runnerResult] in
             switch runnerResult {
-            case .failure:
-                return
+            case .failure(let error):
+                DispatchQueue.main.async {
+                    self.inferenceLabelText = "Inference unavailable: \(error.localizedDescription)"
+                }
             case .success(let runner):
                 do {
                     let result = try runner.inferRandomTestSample()
@@ -156,6 +259,19 @@ final class MNISTViewModel: ObservableObject {
                     }
                 }
             }
+        }
+    }
+
+    private func selectedRunnerResult(
+        for backend: MNISTTrainingBackend
+    ) -> Result<any MNISTTrainingRunner, RunnerInitializationError> {
+        switch backend {
+        case .taichiMetal:
+            return taichiRunnerResult.map { $0 as any MNISTTrainingRunner }
+        case .mlxCustomFunctionManual:
+            return mlxManualRunnerResult.map { $0 as any MNISTTrainingRunner }
+        case .mlxCustomFunctionAdam:
+            return mlxAdamRunnerResult.map { $0 as any MNISTTrainingRunner }
         }
     }
 
@@ -222,6 +338,25 @@ struct ContentView: View {
                         Text("Training Parameters")
                             .font(.headline)
                             .foregroundColor(.primary)
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Backend")
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+
+                            Picker("Backend", selection: $viewModel.trainingBackend) {
+                                ForEach(MNISTTrainingBackend.allCases) { backend in
+                                    Text(backend.title).tag(backend)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+
+                            Text(viewModel.trainingBackend.note)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+
+                        Divider()
                         
                         // Epochs
                         VStack(alignment: .leading, spacing: 6) {
