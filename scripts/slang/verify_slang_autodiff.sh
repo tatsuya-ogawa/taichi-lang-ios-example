@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 SLANGC_BIN="${SLANGC:-slangc}"
 SLANG_PROFILE="${SLANG_PROFILE:-metal_2_4}"
-SLANG_SOURCE="${SLANG_SOURCE:-$ROOT_DIR/slang/autodiff_probe.slang}"
+SLANG_SOURCE="${SLANG_SOURCE:-$ROOT_DIR/slang/probes/autodiff_probe.slang}"
 SLANG_OUT_DIR="${SLANG_OUT_DIR:-$ROOT_DIR/build/slang_verify}"
 
 if [[ "$SLANG_SOURCE" != /* ]]; then

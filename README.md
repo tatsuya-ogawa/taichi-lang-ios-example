@@ -19,12 +19,21 @@ The main goal is to validate an end-to-end workflow:
 
 ## Project structure
 
-- `scripts/build_metal_aot_autodiff.py`: exports a small autodiff example (`forward` / `backward`).
-- `scripts/build_metal_aot_mnist.py`: exports MNIST training/inference kernels.
-- `scripts/export_metal_from_spv.py`: converts Taichi-generated `.spv` into Metal source and libraries.
-- `scripts/prepare_mnist_subset.py`: prepares an app-friendly MNIST subset binary.
+- `scripts/taichi/`: Taichi AOT build/export utilities.
+  - `build_metal_aot_autodiff.py`
+  - `build_metal_aot_mnist.py`
+  - `export_metal_from_spv.py`
+  - `prepare_mnist_subset.py`
+- `scripts/slang/`: Slang verification/conversion utilities.
+  - `verify_slang_autodiff.sh`
+  - `convert_slang_metal_to_mlx.py`
+- `slang/`: Slang-specific assets.
+  - `probes/autodiff_probe.slang`
+  - `compose.yml`
+  - `Dockerfile`
 - `TaichiJitExampleApp/`: SwiftUI iOS app that runs kernels with Metal.
 - `Makefile`: single entrypoint for setup and build flows.
+- `docs/PIPELINES.md`: quick reference for Taichi/Slang command flows.
 
 ## Requirements
 
@@ -85,7 +94,7 @@ In the app:
 make slang-check
 ```
 
-This compiles `slang/autodiff_probe.slang` with two entry points:
+This compiles `slang/probes/autodiff_probe.slang` with two entry points:
 
 - `run_backward_auto`: reverse-mode via `bwd_diff(...)`
 - `run_backward_custom`: reverse-mode with explicit custom backward registration
@@ -98,7 +107,7 @@ If `slangc` is not installed on host, use Docker:
 make slang-check-docker
 ```
 
-The Docker flow builds `Dockerfile.slang`, installs latest `slangc`, and emits `.metal` files under `build/slang_verify/`.
+The Docker flow builds `slang/Dockerfile`, installs latest `slangc`, and emits `.metal` files under `build/slang_verify/`.
 
 To convert Slang-generated `.metal` into an `MLXFast.metalKernel(...)` Swift snippet:
 
