@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		098DA4B02F4AF10000334BBC /* MLX in Frameworks */ = {isa = PBXBuildFile; productRef = 098DA4B12F4AF10000334BBC /* MLX */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		098DA4972F3C409800334BBC /* TaichiJitExampleApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TaichiJitExampleApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -23,6 +27,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				098DA4B02F4AF10000334BBC /* MLX in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -65,6 +70,7 @@
 			);
 			name = TaichiJitExampleApp;
 			packageProductDependencies = (
+				098DA4B12F4AF10000334BBC /* MLX */,
 			);
 			productName = TaichiJitExampleApp;
 			productReference = 098DA4972F3C409800334BBC /* TaichiJitExampleApp.app */;
@@ -94,6 +100,9 @@
 			);
 			mainGroup = 098DA48E2F3C409800334BBC;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				098DA4B22F4AF10000334BBC /* XCRemoteSwiftPackageReference "mlx-swift" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 098DA4982F3C409800334BBC /* Products */;
 			projectDirPath = "";
@@ -251,6 +260,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Manual;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = "";
@@ -286,6 +296,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Manual;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = "";
@@ -338,6 +349,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		098DA4B22F4AF10000334BBC /* XCRemoteSwiftPackageReference "mlx-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/ml-explore/mlx-swift";
+			requirement = {
+				kind = revision;
+				revision = 0cc79567541dae0b4888c41c78ebff0d5e0ff54a;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		098DA4B12F4AF10000334BBC /* MLX */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 098DA4B22F4AF10000334BBC /* XCRemoteSwiftPackageReference "mlx-swift" */;
+			productName = MLX;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 098DA48F2F3C409800334BBC /* Project object */;
 }
