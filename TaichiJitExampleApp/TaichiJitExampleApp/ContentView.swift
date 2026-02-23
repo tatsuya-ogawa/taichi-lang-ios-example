@@ -57,9 +57,9 @@ enum MNISTTrainingBackend: String, CaseIterable, Identifiable {
         case .taichiMetal:
             return "Uses Taichi AOT-generated Metal kernels."
         case .mlxCustomFunctionManual:
-            return "Uses MLX CustomFunction (Forward + VJP) with handwritten SGD updates."
+            return "Uses MLX CustomFunction (Forward + VJP), plus a Slang-converted feature kernel, with handwritten SGD updates."
         case .mlxCustomFunctionAdam:
-            return "Uses MLX CustomFunction (Forward + VJP) with MLXOptimizers.Adam updates."
+            return "Uses MLX CustomFunction (Forward + VJP), plus a Slang-converted feature kernel, with MLXOptimizers.Adam updates."
         }
     }
 }

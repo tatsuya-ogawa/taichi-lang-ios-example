@@ -1,0 +1,33 @@
+{
+  "metal": "/Users/tatsuyaogawa/Desktop/taichi-lang-ios-example/build/slang_verify/run_backward_custom.metal",
+  "entry": "run_backward_custom",
+  "kernel_name": "mnist_slang_feature_transform",
+  "kernel_var": "run_backward_customKernel",
+  "input_names": [
+    "inValue_1"
+  ],
+  "output_names": [
+    "outGradCustom_1"
+  ],
+  "source": "uint3 tid_0 = thread_position_in_grid;\nuint i_0 = tid_0.x;\nthread DiffPair_float_0 x_1;\n(&x_1)->primal_0 = *(inValue_1+i_0);\n(&x_1)->differential_0 = 0.0;\nsquareCustomBackward_0(&x_1, 1.0);\n*(outGradCustom_1+i_0) = x_1.differential_0;\nreturn;",
+  "header": "#include <metal_stdlib>\n#include <metal_math>\n#include <metal_texture>\nusing namespace metal;\nstruct DiffPair_float_0\n{\n    float primal_0;\n    float differential_0;\n};\nvoid squareCustomBackward_0(DiffPair_float_0 thread* x_0, float dOut_0)\n{\n    float _S1 = (*x_0).differential_0 + 2.0 * (*x_0).primal_0 * dOut_0;\n    x_0->primal_0 = (*x_0).primal_0;\n    x_0->differential_0 = _S1;\n    return;\n}\nstruct KernelContext_0\n{\n    float device* inValue_0;\n    float device* outGradCustom_0;\n};\n",
+  "buffer_parameters": [
+    {
+      "name": "inValue_1",
+      "buffer_index": 0,
+      "role": "input",
+      "type": "float device*"
+    },
+    {
+      "name": "outGradCustom_1",
+      "buffer_index": 2,
+      "role": "output",
+      "type": "float device*"
+    }
+  ],
+  "attribute_aliases": [
+    "uint3 tid_0 = thread_position_in_grid;"
+  ],
+  "line_directives_kept": false,
+  "swift_out": "/Users/tatsuyaogawa/Desktop/taichi-lang-ios-example/build/slang_verify/run_backward_custom_mlx.swift"
+}

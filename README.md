@@ -19,18 +19,28 @@ The main goal is to validate an end-to-end workflow:
 
 ## Project structure
 
-- `scripts/build_metal_aot_autodiff.py`: exports a small autodiff example (`forward` / `backward`).
-- `scripts/build_metal_aot_mnist.py`: exports MNIST training/inference kernels.
-- `scripts/export_metal_from_spv.py`: converts Taichi-generated `.spv` into Metal source and libraries.
-- `scripts/prepare_mnist_subset.py`: prepares an app-friendly MNIST subset binary.
+- `scripts/taichi/`: Taichi AOT build/export utilities.
+  - `build_metal_aot_autodiff.py`
+  - `build_metal_aot_mnist.py`
+  - `export_metal_from_spv.py`
+  - `prepare_mnist_subset.py`
+- `scripts/slang/`: Slang verification/conversion utilities.
+  - `verify_slang_autodiff.sh`
+  - `convert_slang_metal_to_mlx.py`
+- `slang/`: Slang-specific assets.
+  - `probes/autodiff_probe.slang`
+  - `compose.yml`
+  - `Dockerfile`
 - `TaichiJitExampleApp/`: SwiftUI iOS app that runs kernels with Metal.
 - `Makefile`: single entrypoint for setup and build flows.
+- `docs/PIPELINES.md`: quick reference for Taichi/Slang command flows.
 
 ## Requirements
 
 - macOS with Xcode and Metal toolchain
 - `uv` for Python environment setup
 - `spirv-cross` (install with `brew install spirv-cross`)
+- `slangc` for Slang verification (`SLANGC=/path/to/slangc` if not on `PATH`)
 
 ## Quick start
 
@@ -77,6 +87,57 @@ In the app:
 - tap `Train MNIST` to run on-device training
 - tap `Infer Random` to run inference and show the input image + prediction
 - adjust epochs / LR / loss-threshold stop in the UI settings
+
+## Slang autodiff check (Slang -> Metal)
+
+```bash
+make slang-check
+```
+
+This compiles `slang/probes/autodiff_probe.slang` with two entry points:
+
+- `run_backward_auto`: reverse-mode via `bwd_diff(...)`
+- `run_backward_custom`: reverse-mode with explicit custom backward registration
+
+Outputs are generated under `build/slang_verify/` as `.metal` and `.metallib`.
+
+If `slangc` is not installed on host, use Docker:
+
+```bash
+make slang-check-docker
+```
+
+The Docker flow builds `slang/Dockerfile`, installs latest `slangc`, and emits `.metal` files under `build/slang_verify/`.
+
+To convert Slang-generated `.metal` into an `MLXFast.metalKernel(...)` Swift snippet:
+
+```bash
+make slang-to-mlx
+```
+
+Default outputs:
+
+- `build/slang_verify/run_backward_custom_mlx.swift`
+- `build/slang_verify/run_backward_custom_mlx.json`
+
+To generate app-bundle JSON consumed by `MNISTMLXRunner`:
+
+```bash
+make ios-slang-assets
+```
+
+This writes:
+
+- `TaichiJitExampleApp/TaichiJitExampleApp/Slang/run_backward_custom_mlx.json`
+
+You can override source/entry/output paths:
+
+```bash
+make slang-to-mlx \
+  SLANG_TO_MLX_METAL=build/slang_verify/run_backward_auto.metal \
+  SLANG_TO_MLX_ENTRY=run_backward_auto \
+  SLANG_TO_MLX_SWIFT=build/slang_verify/run_backward_auto_mlx.swift
+```
 
 ## Config knobs
 
