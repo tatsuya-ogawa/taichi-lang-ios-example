@@ -7,6 +7,8 @@
 
 import Foundation
 import MLX
+import MLXNN
+import MLXOptimizers
 
 enum MNISTMLXRunnerError: LocalizedError {
     case missingBundleResource(String)
@@ -25,7 +27,33 @@ enum MNISTMLXRunnerError: LocalizedError {
     }
 }
 
+enum MNISTMLXUpdateRule: Sendable {
+    case manualSGD
+    case adamOptimizer
+}
+
 final class MNISTMLXRunner {
+    nonisolated private final class LinearMNISTModel: Module, @unchecked Sendable {
+        var weights: MLXArray
+        var bias: MLXArray
+        private let linearWithBias: ([MLXArray]) -> [MLXArray]
+
+        init(
+            weights: MLXArray,
+            bias: MLXArray,
+            linearWithBias: @escaping ([MLXArray]) -> [MLXArray]
+        ) {
+            self.weights = weights
+            self.bias = bias
+            self.linearWithBias = linearWithBias
+            super.init()
+        }
+
+        func logits(_ x: MLXArray) -> MLXArray {
+            linearWithBias([x, weights, bias])[0]
+        }
+    }
+
     private struct MNISTBinaryDataset {
         let imageSize: Int
         let trainCount: Int
@@ -106,6 +134,7 @@ final class MNISTMLXRunner {
     private let trainLabels: [Int32]
     private let testLabels: [Int32]
     private let linearWithBias: ([MLXArray]) -> [MLXArray]
+    private let updateRule: MNISTMLXUpdateRule
 
     private var weights: MLXArray
     private var bias: MLXArray
@@ -113,7 +142,8 @@ final class MNISTMLXRunner {
     private let numClasses = 10
     private let batchSize = 128
 
-    init() throws {
+    init(updateRule: MNISTMLXUpdateRule = .manualSGD) throws {
+        self.updateRule = updateRule
         let bundle = Bundle.main
         guard let datasetURL = bundle.url(forResource: "mnist_subset", withExtension: "bin") else {
             throw MNISTMLXRunnerError.missingBundleResource("MNIST/mnist_subset.bin")
@@ -290,6 +320,30 @@ final class MNISTMLXRunner {
         lossThreshold: Float?,
         progress: ((MNISTTrainingProgress) -> Void)?
     ) throws -> MNISTTrainingSummary {
+        switch updateRule {
+        case .manualSGD:
+            return try trainWithManualSGD(
+                epochs: epochs,
+                learningRate: learningRate,
+                lossThreshold: lossThreshold,
+                progress: progress
+            )
+        case .adamOptimizer:
+            return try trainWithAdam(
+                epochs: epochs,
+                learningRate: learningRate,
+                lossThreshold: lossThreshold,
+                progress: progress
+            )
+        }
+    }
+
+    private func trainWithManualSGD(
+        epochs: Int,
+        learningRate: Float,
+        lossThreshold: Float?,
+        progress: ((MNISTTrainingProgress) -> Void)?
+    ) throws -> MNISTTrainingSummary {
         let targetEpochs = max(1, epochs)
         let trainCount = dataset.trainCount
 
@@ -368,6 +422,106 @@ final class MNISTMLXRunner {
                 break
             }
         }
+
+        let testAccuracy = try evaluateTestAccuracy(sampleLimit: min(dataset.testCount, 300))
+        return MNISTTrainingSummary(
+            epochs: completedEpochs,
+            trainLoss: lastAvgLoss,
+            trainAccuracy: lastAvgAccuracy,
+            testAccuracy: testAccuracy,
+            stoppedByLossThreshold: stoppedByLossThreshold
+        )
+    }
+
+    private func trainWithAdam(
+        epochs: Int,
+        learningRate: Float,
+        lossThreshold: Float?,
+        progress: ((MNISTTrainingProgress) -> Void)?
+    ) throws -> MNISTTrainingSummary {
+        let targetEpochs = max(1, epochs)
+        let trainCount = dataset.trainCount
+
+        let model = LinearMNISTModel(
+            weights: weights,
+            bias: bias,
+            linearWithBias: linearWithBias
+        )
+        let optimizer = Adam(learningRate: learningRate)
+
+        let lossAndGrad = valueAndGrad(model: model) { model, args in
+            let x = args[0]
+            let y = args[1]
+            let logits = model.logits(x)
+            let loss = Self.crossEntropyLoss(logits: logits, targets: y)
+            return [loss]
+        }
+
+        var completedEpochs = 0
+        var stoppedByLossThreshold = false
+        var lastAvgLoss: Float = 0
+        var lastAvgAccuracy: Float = 0
+
+        for epoch in 0..<targetEpochs {
+            var seen = 0
+            var weightedLossSum: Float = 0
+            var weightedAccSum: Float = 0
+            var nextProgressSample = 100
+
+            while seen < trainCount {
+                let count = min(batchSize, trainCount - seen)
+                let xBatch = makeFeatureArray(from: dataset.trainImages, start: seen, count: count)
+                let yBatch = makeLabelArray(from: trainLabels, start: seen, count: count)
+
+                let (lossOutputs, grads) = lossAndGrad(model, [xBatch, yBatch])
+                let batchLoss = lossOutputs[0]
+
+                optimizer.update(model: model, gradients: grads)
+
+                let logits = model.logits(xBatch)
+                let predicted = argMax(logits, axis: -1)
+                let batchAccuracy = mean((predicted .== yBatch).asType(.float32))
+
+                eval(model, optimizer, batchLoss, batchAccuracy)
+
+                let batchLossValue = batchLoss.item(Float.self)
+                let batchAccuracyValue = batchAccuracy.item(Float.self)
+                weightedLossSum += batchLossValue * Float(count)
+                weightedAccSum += batchAccuracyValue * Float(count)
+                seen += count
+
+                if seen >= nextProgressSample || seen == trainCount {
+                    let avgLoss = weightedLossSum / Float(seen)
+                    let avgAccuracy = weightedAccSum / Float(seen)
+                    progress?(
+                        MNISTTrainingProgress(
+                            epoch: epoch + 1,
+                            sample: seen,
+                            totalSamples: trainCount,
+                            averageLoss: avgLoss,
+                            accuracy: avgAccuracy
+                        )
+                    )
+                    lastAvgLoss = avgLoss
+                    lastAvgAccuracy = avgAccuracy
+                    nextProgressSample += 100
+
+                    if let threshold = lossThreshold, avgLoss <= threshold {
+                        stoppedByLossThreshold = true
+                        break
+                    }
+                }
+            }
+
+            completedEpochs = epoch + 1
+            if stoppedByLossThreshold {
+                break
+            }
+        }
+
+        weights = model.weights
+        bias = model.bias
+        eval(weights, bias)
 
         let testAccuracy = try evaluateTestAccuracy(sampleLimit: min(dataset.testCount, 300))
         return MNISTTrainingSummary(

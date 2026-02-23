@@ -36,7 +36,8 @@ private struct RunnerInitializationError: LocalizedError, Sendable {
 
 enum MNISTTrainingBackend: String, CaseIterable, Identifiable {
     case taichiMetal
-    case mlxCustomFunction
+    case mlxCustomFunctionManual
+    case mlxCustomFunctionAdam
 
     var id: Self { self }
 
@@ -44,8 +45,10 @@ enum MNISTTrainingBackend: String, CaseIterable, Identifiable {
         switch self {
         case .taichiMetal:
             return "Taichi Metal"
-        case .mlxCustomFunction:
-            return "MLX Custom Function"
+        case .mlxCustomFunctionManual:
+            return "MLX Custom Function (Manual SGD)"
+        case .mlxCustomFunctionAdam:
+            return "MLX Custom Function (Adam Optimizer)"
         }
     }
 
@@ -53,8 +56,10 @@ enum MNISTTrainingBackend: String, CaseIterable, Identifiable {
         switch self {
         case .taichiMetal:
             return "Uses Taichi AOT-generated Metal kernels."
-        case .mlxCustomFunction:
-            return "Uses MLX CustomFunction (Forward + VJP) for training."
+        case .mlxCustomFunctionManual:
+            return "Uses MLX CustomFunction (Forward + VJP) with handwritten SGD updates."
+        case .mlxCustomFunctionAdam:
+            return "Uses MLX CustomFunction (Forward + VJP) with MLXOptimizers.Adam updates."
         }
     }
 }
@@ -73,7 +78,8 @@ final class MNISTViewModel: ObservableObject {
     @Published var trainingBackend: MNISTTrainingBackend = .taichiMetal
 
     private let taichiRunnerResult: Result<MNISTMetalRunner, RunnerInitializationError>
-    private let mlxRunnerResult: Result<MNISTMLXRunner, RunnerInitializationError>
+    private let mlxManualRunnerResult: Result<MNISTMLXRunner, RunnerInitializationError>
+    private let mlxAdamRunnerResult: Result<MNISTMLXRunner, RunnerInitializationError>
 
     init() {
         do {
@@ -85,20 +91,34 @@ final class MNISTViewModel: ObservableObject {
         }
 
         do {
-            mlxRunnerResult = .success(try MNISTMLXRunner())
+            mlxManualRunnerResult = .success(
+                try MNISTMLXRunner(updateRule: .manualSGD)
+            )
         } catch {
-            mlxRunnerResult = .failure(
+            mlxManualRunnerResult = .failure(
+                RunnerInitializationError(message: error.localizedDescription)
+            )
+        }
+
+        do {
+            mlxAdamRunnerResult = .success(
+                try MNISTMLXRunner(updateRule: .adamOptimizer)
+            )
+        } catch {
+            mlxAdamRunnerResult = .failure(
                 RunnerInitializationError(message: error.localizedDescription)
             )
         }
 
         if case .failure(let taichiError) = taichiRunnerResult,
-            case .failure(let mlxError) = mlxRunnerResult
+            case .failure(let mlxManualError) = mlxManualRunnerResult,
+            case .failure(let mlxAdamError) = mlxAdamRunnerResult
         {
             output = """
             Initialization failed.
             Taichi Metal: \(taichiError.localizedDescription)
-            MLX Custom Function: \(mlxError.localizedDescription)
+            MLX Custom Function (Manual): \(mlxManualError.localizedDescription)
+            MLX Custom Function (Adam): \(mlxAdamError.localizedDescription)
             """
         }
     }
@@ -248,8 +268,10 @@ final class MNISTViewModel: ObservableObject {
         switch backend {
         case .taichiMetal:
             return taichiRunnerResult.map { $0 as any MNISTTrainingRunner }
-        case .mlxCustomFunction:
-            return mlxRunnerResult.map { $0 as any MNISTTrainingRunner }
+        case .mlxCustomFunctionManual:
+            return mlxManualRunnerResult.map { $0 as any MNISTTrainingRunner }
+        case .mlxCustomFunctionAdam:
+            return mlxAdamRunnerResult.map { $0 as any MNISTTrainingRunner }
         }
     }
 

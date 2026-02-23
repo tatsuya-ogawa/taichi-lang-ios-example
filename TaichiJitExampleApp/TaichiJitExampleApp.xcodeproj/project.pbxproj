@@ -8,6 +8,8 @@
 
 /* Begin PBXBuildFile section */
 		098DA4B02F4AF10000334BBC /* MLX in Frameworks */ = {isa = PBXBuildFile; productRef = 098DA4B12F4AF10000334BBC /* MLX */; };
+		098DA4B32F4AF20000334BBC /* MLXNN in Frameworks */ = {isa = PBXBuildFile; productRef = 098DA4B52F4AF20000334BBC /* MLXNN */; };
+		098DA4B42F4AF20000334BBC /* MLXOptimizers in Frameworks */ = {isa = PBXBuildFile; productRef = 098DA4B62F4AF20000334BBC /* MLXOptimizers */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -28,6 +30,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				098DA4B02F4AF10000334BBC /* MLX in Frameworks */,
+				098DA4B32F4AF20000334BBC /* MLXNN in Frameworks */,
+				098DA4B42F4AF20000334BBC /* MLXOptimizers in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -71,6 +75,8 @@
 			name = TaichiJitExampleApp;
 			packageProductDependencies = (
 				098DA4B12F4AF10000334BBC /* MLX */,
+				098DA4B52F4AF20000334BBC /* MLXNN */,
+				098DA4B62F4AF20000334BBC /* MLXOptimizers */,
 			);
 			productName = TaichiJitExampleApp;
 			productReference = 098DA4972F3C409800334BBC /* TaichiJitExampleApp.app */;
@@ -366,6 +372,16 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 098DA4B22F4AF10000334BBC /* XCRemoteSwiftPackageReference "mlx-swift" */;
 			productName = MLX;
+		};
+		098DA4B52F4AF20000334BBC /* MLXNN */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 098DA4B22F4AF10000334BBC /* XCRemoteSwiftPackageReference "mlx-swift" */;
+			productName = MLXNN;
+		};
+		098DA4B62F4AF20000334BBC /* MLXOptimizers */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 098DA4B22F4AF10000334BBC /* XCRemoteSwiftPackageReference "mlx-swift" */;
+			productName = MLXOptimizers;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
