@@ -1,0 +1,52 @@
+{
+  "kernels": {
+    "mnist_linear_forward": {
+      "kernel_name": "mnist_linear_forward",
+      "input_names": [
+        "x",
+        "w",
+        "b"
+      ],
+      "output_names": [
+        "out"
+      ],
+      "source": "uint elem = thread_position_in_grid.x;\nint batch = x_shape[0];\nint inFeatures = x_shape[1];\nint outFeatures = w_shape[0];\n\nint outIndex = int(elem);\nint cls = outIndex % outFeatures;\nint sample = outIndex / outFeatures;\nif (sample >= batch) return;\n\nfloat acc = b[cls];\nint xBase = sample * inFeatures;\nint wBase = cls * inFeatures;\nfor (int i = 0; i < inFeatures; ++i) {\n    acc += x[xBase + i] * w[wBase + i];\n}\nout[outIndex] = acc;",
+      "header": ""
+    },
+    "mnist_linear_grad_x": {
+      "kernel_name": "mnist_linear_grad_x",
+      "input_names": [
+        "w",
+        "cotangent"
+      ],
+      "output_names": [
+        "x_grad"
+      ],
+      "source": "uint elem = thread_position_in_grid.x;\nint batch = cotangent_shape[0];\nint outFeatures = cotangent_shape[1];\nint inFeatures = w_shape[1];\n\nint outIndex = int(elem);\nint feature = outIndex % inFeatures;\nint sample = outIndex / inFeatures;\nif (sample >= batch) return;\n\nfloat acc = 0.0f;\nint cotBase = sample * outFeatures;\nfor (int cls = 0; cls < outFeatures; ++cls) {\n    acc += cotangent[cotBase + cls] * w[cls * inFeatures + feature];\n}\nx_grad[outIndex] = acc;",
+      "header": ""
+    },
+    "mnist_linear_grad_w": {
+      "kernel_name": "mnist_linear_grad_w",
+      "input_names": [
+        "x",
+        "cotangent"
+      ],
+      "output_names": [
+        "w_grad"
+      ],
+      "source": "uint elem = thread_position_in_grid.x;\nint batch = x_shape[0];\nint inFeatures = x_shape[1];\nint outFeatures = cotangent_shape[1];\n\nint outIndex = int(elem);\nint feature = outIndex % inFeatures;\nint cls = outIndex / inFeatures;\nif (cls >= outFeatures) return;\n\nfloat acc = 0.0f;\nfor (int sample = 0; sample < batch; ++sample) {\n    acc += cotangent[sample * outFeatures + cls] * x[sample * inFeatures + feature];\n}\nw_grad[outIndex] = acc;",
+      "header": ""
+    },
+    "mnist_linear_grad_b": {
+      "kernel_name": "mnist_linear_grad_b",
+      "input_names": [
+        "cotangent"
+      ],
+      "output_names": [
+        "b_grad"
+      ],
+      "source": "uint elem = thread_position_in_grid.x;\nint batch = cotangent_shape[0];\nint outFeatures = cotangent_shape[1];\nint cls = int(elem);\nif (cls >= outFeatures) return;\n\nfloat acc = 0.0f;\nfor (int sample = 0; sample < batch; ++sample) {\n    acc += cotangent[sample * outFeatures + cls];\n}\nb_grad[cls] = acc;",
+      "header": ""
+    }
+  }
+}

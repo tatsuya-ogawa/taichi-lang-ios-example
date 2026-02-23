@@ -1,0 +1,17 @@
+services:
+  slang:
+    build:
+      context: .
+      dockerfile: Dockerfile.slang
+    working_dir: /work
+    volumes:
+      - .:/work
+    entrypoint: ["/bin/bash", "-lc"]
+    command:
+      - >
+        set -euo pipefail;
+        mkdir -p build/slang_verify;
+        slangc slang/autodiff_probe.slang -target metal -entry run_backward_auto -stage compute -o build/slang_verify/run_backward_auto.metal;
+        slangc slang/autodiff_probe.slang -target metal -entry run_backward_custom -stage compute -o build/slang_verify/run_backward_custom.metal;
+        slangc -version;
+        ls -1 build/slang_verify/*.metal

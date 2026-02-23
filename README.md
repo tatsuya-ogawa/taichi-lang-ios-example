@@ -31,6 +31,7 @@ The main goal is to validate an end-to-end workflow:
 - macOS with Xcode and Metal toolchain
 - `uv` for Python environment setup
 - `spirv-cross` (install with `brew install spirv-cross`)
+- `slangc` for Slang verification (`SLANGC=/path/to/slangc` if not on `PATH`)
 
 ## Quick start
 
@@ -77,6 +78,57 @@ In the app:
 - tap `Train MNIST` to run on-device training
 - tap `Infer Random` to run inference and show the input image + prediction
 - adjust epochs / LR / loss-threshold stop in the UI settings
+
+## Slang autodiff check (Slang -> Metal)
+
+```bash
+make slang-check
+```
+
+This compiles `slang/autodiff_probe.slang` with two entry points:
+
+- `run_backward_auto`: reverse-mode via `bwd_diff(...)`
+- `run_backward_custom`: reverse-mode with explicit custom backward registration
+
+Outputs are generated under `build/slang_verify/` as `.metal` and `.metallib`.
+
+If `slangc` is not installed on host, use Docker:
+
+```bash
+make slang-check-docker
+```
+
+The Docker flow builds `Dockerfile.slang`, installs latest `slangc`, and emits `.metal` files under `build/slang_verify/`.
+
+To convert Slang-generated `.metal` into an `MLXFast.metalKernel(...)` Swift snippet:
+
+```bash
+make slang-to-mlx
+```
+
+Default outputs:
+
+- `build/slang_verify/run_backward_custom_mlx.swift`
+- `build/slang_verify/run_backward_custom_mlx.json`
+
+To generate app-bundle JSON consumed by `MNISTMLXRunner`:
+
+```bash
+make ios-slang-assets
+```
+
+This writes:
+
+- `TaichiJitExampleApp/TaichiJitExampleApp/Slang/run_backward_custom_mlx.json`
+
+You can override source/entry/output paths:
+
+```bash
+make slang-to-mlx \
+  SLANG_TO_MLX_METAL=build/slang_verify/run_backward_auto.metal \
+  SLANG_TO_MLX_ENTRY=run_backward_auto \
+  SLANG_TO_MLX_SWIFT=build/slang_verify/run_backward_auto_mlx.swift
+```
 
 ## Config knobs
 

@@ -13,6 +13,7 @@ import MLXOptimizers
 enum MNISTMLXRunnerError: LocalizedError {
     case missingBundleResource(String)
     case invalidDatasetFormat(String)
+    case invalidKernelSpec(String)
     case invalidPrediction(String)
 
     var errorDescription: String? {
@@ -21,6 +22,8 @@ enum MNISTMLXRunnerError: LocalizedError {
             return "Missing app resource: \(name)"
         case .invalidDatasetFormat(let detail):
             return "Invalid MNIST dataset format: \(detail)"
+        case .invalidKernelSpec(let detail):
+            return "Invalid Slang kernel spec: \(detail)"
         case .invalidPrediction(let detail):
             return "Invalid model prediction: \(detail)"
         }
@@ -130,10 +133,31 @@ final class MNISTMLXRunner {
         }
     }
 
+    private struct SlangKernelSpec: Decodable {
+        let kernelName: String
+        let inputNames: [String]
+        let outputNames: [String]
+        let source: String
+        let header: String
+
+        private enum CodingKeys: String, CodingKey {
+            case kernelName = "kernel_name"
+            case inputNames = "input_names"
+            case outputNames = "output_names"
+            case source
+            case header
+        }
+    }
+
+    private struct KernelSpecLibrary: Decodable {
+        let kernels: [String: SlangKernelSpec]
+    }
+
     private let dataset: MNISTBinaryDataset
     private let trainLabels: [Int32]
     private let testLabels: [Int32]
     private let linearWithBias: ([MLXArray]) -> [MLXArray]
+    private let featureTransform: (MLXArray) -> MLXArray
     private let updateRule: MNISTMLXUpdateRule
 
     private var weights: MLXArray
@@ -148,6 +172,57 @@ final class MNISTMLXRunner {
         guard let datasetURL = bundle.url(forResource: "mnist_subset", withExtension: "bin") else {
             throw MNISTMLXRunnerError.missingBundleResource("MNIST/mnist_subset.bin")
         }
+        let slangFeatureTransformSpec = try Self.loadKernelSpec(
+            named: "run_backward_custom_mlx",
+            from: bundle
+        )
+        try Self.validateKernelSpec(
+            slangFeatureTransformSpec,
+            expectedInputCount: 1,
+            expectedOutputCount: 1,
+            label: "feature transform"
+        )
+        let linearKernelLibrary = try Self.loadLinearKernelLibrary(from: bundle)
+        let forwardSpec = try Self.requiredKernel(
+            named: "mnist_linear_forward",
+            in: linearKernelLibrary
+        )
+        try Self.validateKernelSpec(
+            forwardSpec,
+            expectedInputCount: 3,
+            expectedOutputCount: 1,
+            label: "mnist_linear_forward"
+        )
+        let gradXSpec = try Self.requiredKernel(
+            named: "mnist_linear_grad_x",
+            in: linearKernelLibrary
+        )
+        try Self.validateKernelSpec(
+            gradXSpec,
+            expectedInputCount: 2,
+            expectedOutputCount: 1,
+            label: "mnist_linear_grad_x"
+        )
+        let gradWSpec = try Self.requiredKernel(
+            named: "mnist_linear_grad_w",
+            in: linearKernelLibrary
+        )
+        try Self.validateKernelSpec(
+            gradWSpec,
+            expectedInputCount: 2,
+            expectedOutputCount: 1,
+            label: "mnist_linear_grad_w"
+        )
+        let gradBSpec = try Self.requiredKernel(
+            named: "mnist_linear_grad_b",
+            in: linearKernelLibrary
+        )
+        try Self.validateKernelSpec(
+            gradBSpec,
+            expectedInputCount: 1,
+            expectedOutputCount: 1,
+            label: "mnist_linear_grad_b"
+        )
 
         let dataset = try MNISTBinaryDataset.load(from: datasetURL)
         guard dataset.imageSize == 28 * 28 else {
@@ -165,95 +240,58 @@ final class MNISTMLXRunner {
         self.weights = MLXArray(initialWeights, [numClasses, dataset.imageSize])
         self.bias = MLXArray.zeros([numClasses], type: Float.self)
 
+        // Slang-generated kernel spec loaded from app bundle.
+        // This computes d(x^2)/dx = 2x elementwise and is wired before the linear layer.
+        let slangFeatureTransformKernel = MLXFast.metalKernel(
+            name: slangFeatureTransformSpec.kernelName,
+            inputNames: slangFeatureTransformSpec.inputNames,
+            outputNames: slangFeatureTransformSpec.outputNames,
+            source: slangFeatureTransformSpec.source,
+            header: slangFeatureTransformSpec.header
+        )
+        self.featureTransform = { [slangFeatureTransformKernel] x in
+            let batch = x.shape[0]
+            let inFeatures = x.shape[1]
+            let total = batch * inFeatures
+            return slangFeatureTransformKernel(
+                [x],
+                grid: (total, 1, 1),
+                threadGroup: (128, 1, 1),
+                outputShapes: [[batch, inFeatures]],
+                outputDTypes: [x.dtype]
+            )[0]
+        }
+
         let forwardKernel = MLXFast.metalKernel(
-            name: "mnist_linear_forward",
-            inputNames: ["x", "w", "b"],
-            outputNames: ["out"],
-            source: """
-                uint elem = thread_position_in_grid.x;
-                int batch = x_shape[0];
-                int inFeatures = x_shape[1];
-                int outFeatures = w_shape[0];
-
-                int outIndex = int(elem);
-                int cls = outIndex % outFeatures;
-                int sample = outIndex / outFeatures;
-                if (sample >= batch) return;
-
-                float acc = b[cls];
-                int xBase = sample * inFeatures;
-                int wBase = cls * inFeatures;
-                for (int i = 0; i < inFeatures; ++i) {
-                    acc += x[xBase + i] * w[wBase + i];
-                }
-                out[outIndex] = acc;
-                """
+            name: forwardSpec.kernelName,
+            inputNames: forwardSpec.inputNames,
+            outputNames: forwardSpec.outputNames,
+            source: forwardSpec.source,
+            header: forwardSpec.header
         )
 
         let gradXKernel = MLXFast.metalKernel(
-            name: "mnist_linear_grad_x",
-            inputNames: ["w", "cotangent"],
-            outputNames: ["x_grad"],
-            source: """
-                uint elem = thread_position_in_grid.x;
-                int batch = cotangent_shape[0];
-                int outFeatures = cotangent_shape[1];
-                int inFeatures = w_shape[1];
-
-                int outIndex = int(elem);
-                int feature = outIndex % inFeatures;
-                int sample = outIndex / inFeatures;
-                if (sample >= batch) return;
-
-                float acc = 0.0f;
-                int cotBase = sample * outFeatures;
-                for (int cls = 0; cls < outFeatures; ++cls) {
-                    acc += cotangent[cotBase + cls] * w[cls * inFeatures + feature];
-                }
-                x_grad[outIndex] = acc;
-                """
+            name: gradXSpec.kernelName,
+            inputNames: gradXSpec.inputNames,
+            outputNames: gradXSpec.outputNames,
+            source: gradXSpec.source,
+            header: gradXSpec.header
         )
 
         let gradWKernel = MLXFast.metalKernel(
-            name: "mnist_linear_grad_w",
-            inputNames: ["x", "cotangent"],
-            outputNames: ["w_grad"],
-            source: """
-                uint elem = thread_position_in_grid.x;
-                int batch = x_shape[0];
-                int inFeatures = x_shape[1];
-                int outFeatures = cotangent_shape[1];
-
-                int outIndex = int(elem);
-                int feature = outIndex % inFeatures;
-                int cls = outIndex / inFeatures;
-                if (cls >= outFeatures) return;
-
-                float acc = 0.0f;
-                for (int sample = 0; sample < batch; ++sample) {
-                    acc += cotangent[sample * outFeatures + cls] * x[sample * inFeatures + feature];
-                }
-                w_grad[outIndex] = acc;
-                """
+            name: gradWSpec.kernelName,
+            inputNames: gradWSpec.inputNames,
+            outputNames: gradWSpec.outputNames,
+            source: gradWSpec.source,
+            header: gradWSpec.header
         )
 
         let gradBKernel = MLXFast.metalKernel(
-            name: "mnist_linear_grad_b",
-            inputNames: ["cotangent"],
-            outputNames: ["b_grad"],
-            source: """
-                uint elem = thread_position_in_grid.x;
-                int batch = cotangent_shape[0];
-                int outFeatures = cotangent_shape[1];
-                int cls = int(elem);
-                if (cls >= outFeatures) return;
-
-                float acc = 0.0f;
-                for (int sample = 0; sample < batch; ++sample) {
-                    acc += cotangent[sample * outFeatures + cls];
-                }
-                b_grad[cls] = acc;
-                """
+            name: gradBSpec.kernelName,
+            inputNames: gradBSpec.inputNames,
+            outputNames: gradBSpec.outputNames,
+            source: gradBSpec.source,
+            header: gradBSpec.header
         )
 
         self.linearWithBias = CustomFunction {
@@ -347,6 +385,7 @@ final class MNISTMLXRunner {
         let targetEpochs = max(1, epochs)
         let trainCount = dataset.trainCount
 
+        let featureTransform = self.featureTransform
         let lossAndGrad = valueAndGrad(
             { [linearWithBias] args in
                 let x = args[0]
@@ -374,15 +413,16 @@ final class MNISTMLXRunner {
             while seen < trainCount {
                 let count = min(batchSize, trainCount - seen)
                 let xBatch = makeFeatureArray(from: dataset.trainImages, start: seen, count: count)
+                let xBatchTransformed = featureTransform(xBatch)
                 let yBatch = makeLabelArray(from: trainLabels, start: seen, count: count)
 
-                let (lossOutputs, grads) = lossAndGrad([xBatch, yBatch, weights, bias])
+                let (lossOutputs, grads) = lossAndGrad([xBatchTransformed, yBatch, weights, bias])
                 let batchLoss = lossOutputs[0]
 
                 weights = weights - learningRate * grads[0]
                 bias = bias - learningRate * grads[1]
 
-                let logits = linearWithBias([xBatch, weights, bias])[0]
+                let logits = linearWithBias([xBatchTransformed, weights, bias])[0]
                 let predicted = argMax(logits, axis: -1)
                 let batchAccuracy = mean((predicted .== yBatch).asType(.float32))
 
@@ -448,6 +488,7 @@ final class MNISTMLXRunner {
             linearWithBias: linearWithBias
         )
         let optimizer = Adam(learningRate: learningRate)
+        let featureTransform = self.featureTransform
 
         let lossAndGrad = valueAndGrad(model: model) { model, args in
             let x = args[0]
@@ -471,14 +512,15 @@ final class MNISTMLXRunner {
             while seen < trainCount {
                 let count = min(batchSize, trainCount - seen)
                 let xBatch = makeFeatureArray(from: dataset.trainImages, start: seen, count: count)
+                let xBatchTransformed = featureTransform(xBatch)
                 let yBatch = makeLabelArray(from: trainLabels, start: seen, count: count)
 
-                let (lossOutputs, grads) = lossAndGrad(model, [xBatch, yBatch])
+                let (lossOutputs, grads) = lossAndGrad(model, [xBatchTransformed, yBatch])
                 let batchLoss = lossOutputs[0]
 
                 optimizer.update(model: model, gradients: grads)
 
-                let logits = model.logits(xBatch)
+                let logits = model.logits(xBatchTransformed)
                 let predicted = argMax(logits, axis: -1)
                 let batchAccuracy = mean((predicted .== yBatch).asType(.float32))
 
@@ -544,7 +586,8 @@ final class MNISTMLXRunner {
         let image = Array(dataset.testImages[imageStart..<imageEnd])
 
         let x = MLXArray(image, [1, dataset.imageSize])
-        let logits = linearWithBias([x, weights, bias])[0]
+        let transformedX = featureTransform(x)
+        let logits = linearWithBias([transformedX, weights, bias])[0]
         let probabilities = softmax(logits, axis: -1)
         let predictedArray = argMax(logits, axis: -1)
         eval(probabilities, predictedArray)
@@ -571,9 +614,10 @@ final class MNISTMLXRunner {
         while seen < total {
             let count = min(batchSize, total - seen)
             let xBatch = makeFeatureArray(from: dataset.testImages, start: seen, count: count)
+            let xBatchTransformed = featureTransform(xBatch)
             let yBatch = makeLabelArray(from: testLabels, start: seen, count: count)
 
-            let logits = linearWithBias([xBatch, weights, bias])[0]
+            let logits = linearWithBias([xBatchTransformed, weights, bias])[0]
             let predicted = argMax(logits, axis: -1)
             let batchCorrect = sum((predicted .== yBatch).asType(.float32))
             eval(batchCorrect)
@@ -583,6 +627,73 @@ final class MNISTMLXRunner {
         }
 
         return correct / Float(total)
+    }
+
+    private static func kernelJSONURL(named name: String, in bundle: Bundle) -> URL? {
+        bundle.url(forResource: name, withExtension: "json", subdirectory: "Slang")
+            ?? bundle.url(forResource: name, withExtension: "json")
+    }
+
+    private static func loadKernelSpec(named name: String, from bundle: Bundle) throws -> SlangKernelSpec {
+        guard let url = kernelJSONURL(named: name, in: bundle) else {
+            throw MNISTMLXRunnerError.missingBundleResource(
+                "Slang/\(name).json (or bundle root \(name).json)"
+            )
+        }
+        do {
+            let data = try Data(contentsOf: url)
+            return try JSONDecoder().decode(SlangKernelSpec.self, from: data)
+        } catch {
+            throw MNISTMLXRunnerError.invalidKernelSpec(
+                "failed to decode \(name).json: \(error.localizedDescription)"
+            )
+        }
+    }
+
+    private static func loadLinearKernelLibrary(from bundle: Bundle) throws -> [String: SlangKernelSpec] {
+        let name = "mnist_linear_kernels"
+        guard let url = kernelJSONURL(named: name, in: bundle) else {
+            throw MNISTMLXRunnerError.missingBundleResource(
+                "Slang/\(name).json (or bundle root \(name).json)"
+            )
+        }
+        do {
+            let data = try Data(contentsOf: url)
+            let library = try JSONDecoder().decode(KernelSpecLibrary.self, from: data)
+            return library.kernels
+        } catch {
+            throw MNISTMLXRunnerError.invalidKernelSpec(
+                "failed to decode \(name).json: \(error.localizedDescription)"
+            )
+        }
+    }
+
+    private static func requiredKernel(
+        named name: String,
+        in library: [String: SlangKernelSpec]
+    ) throws -> SlangKernelSpec {
+        guard let spec = library[name] else {
+            throw MNISTMLXRunnerError.invalidKernelSpec("kernel '\(name)' not found in mnist_linear_kernels.json")
+        }
+        return spec
+    }
+
+    private static func validateKernelSpec(
+        _ spec: SlangKernelSpec,
+        expectedInputCount: Int,
+        expectedOutputCount: Int,
+        label: String
+    ) throws {
+        guard spec.inputNames.count == expectedInputCount else {
+            throw MNISTMLXRunnerError.invalidKernelSpec(
+                "\(label): expected \(expectedInputCount) input(s), got \(spec.inputNames.count)"
+            )
+        }
+        guard spec.outputNames.count == expectedOutputCount else {
+            throw MNISTMLXRunnerError.invalidKernelSpec(
+                "\(label): expected \(expectedOutputCount) output(s), got \(spec.outputNames.count)"
+            )
+        }
     }
 
     private static func crossEntropyLoss(logits: MLXArray, targets: MLXArray) -> MLXArray {

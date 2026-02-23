@@ -14,9 +14,19 @@ MNIST_TRAIN_COUNT ?= 2000
 MNIST_TEST_COUNT ?= 400
 IOS_MNIST_SHADER_DIR ?= TaichiJitExampleApp/TaichiJitExampleApp/Shaders/MNIST
 IOS_MNIST_DATA_DIR ?= TaichiJitExampleApp/TaichiJitExampleApp/MNIST
+SLANGC ?= slangc
+SLANG_PROFILE ?= metal_2_4
+SLANG_SOURCE ?= slang/autodiff_probe.slang
+SLANG_VERIFY_DIR ?= build/slang_verify
+SLANG_COMPOSE_FILE ?= compose.slang.yml
+SLANG_TO_MLX_METAL ?= build/slang_verify/run_backward_custom.metal
+SLANG_TO_MLX_ENTRY ?= run_backward_custom
+SLANG_TO_MLX_SWIFT ?= build/slang_verify/run_backward_custom_mlx.swift
+SLANG_TO_MLX_JSON ?= build/slang_verify/run_backward_custom_mlx.json
+SLANG_TO_MLX_BUNDLE_JSON ?= TaichiJitExampleApp/TaichiJitExampleApp/Slang/run_backward_custom_mlx.json
 
 .PHONY: help setup venv install build build-check metal-src metal-lib ios-shaders
-.PHONY: prepare-mnist build-mnist-aot metal-lib-mnist ios-mnist-assets
+.PHONY: prepare-mnist build-mnist-aot metal-lib-mnist ios-mnist-assets slang-check slang-check-docker slang-to-mlx ios-slang-assets
 
 help:
 	@echo "Targets:"
@@ -30,6 +40,10 @@ help:
 	@echo "  make build-mnist-aot  # build MNIST kernels as Taichi AOT"
 	@echo "  make metal-lib-mnist  # convert MNIST AOT kernels to .metallib"
 	@echo "  make ios-mnist-assets # prepare MNIST data + shaders for iOS app"
+	@echo "  make slang-check      # compile Slang autodiff sample to Metal/.metallib"
+	@echo "  make slang-check-docker # run Slang probe in Docker and emit .metal files"
+	@echo "  make slang-to-mlx     # auto-convert Slang .metal into MLX metalKernel Swift snippet"
+	@echo "  make ios-slang-assets # generate bundle JSON for MNIST MLX Slang feature kernel"
 
 setup: install
 
@@ -77,3 +91,30 @@ ios-mnist-assets: prepare-mnist metal-lib-mnist
 	rm -f "$(IOS_MNIST_SHADER_DIR)"/mnist_*.metallib
 	cp "$(MNIST_METAL_OUTPUT_DIR)"/mnist_*.metallib "$(IOS_MNIST_SHADER_DIR)/"
 	cp "$(MNIST_AOT_DIR)/metadata.json" "$(IOS_MNIST_DATA_DIR)/mnist_metadata.json"
+
+slang-check:
+	SLANGC="$(SLANGC)" \
+	SLANG_PROFILE="$(SLANG_PROFILE)" \
+	SLANG_SOURCE="$(SLANG_SOURCE)" \
+	SLANG_OUT_DIR="$(SLANG_VERIFY_DIR)" \
+	bash scripts/verify_slang_autodiff.sh
+
+slang-check-docker:
+	docker compose -f "$(SLANG_COMPOSE_FILE)" build slang
+	docker compose -f "$(SLANG_COMPOSE_FILE)" run --rm slang
+
+slang-to-mlx:
+	"$(PYTHON)" scripts/convert_slang_metal_to_mlx.py \
+		--metal "$(SLANG_TO_MLX_METAL)" \
+		--entry "$(SLANG_TO_MLX_ENTRY)" \
+		--swift-out "$(SLANG_TO_MLX_SWIFT)" \
+		--json-out "$(SLANG_TO_MLX_JSON)"
+
+ios-slang-assets:
+	mkdir -p "$$(dirname "$(SLANG_TO_MLX_BUNDLE_JSON)")"
+	"$(PYTHON)" scripts/convert_slang_metal_to_mlx.py \
+		--metal "$(SLANG_TO_MLX_METAL)" \
+		--entry "$(SLANG_TO_MLX_ENTRY)" \
+		--kernel-name "mnist_slang_feature_transform" \
+		--swift-out "$(SLANG_TO_MLX_SWIFT)" \
+		--json-out "$(SLANG_TO_MLX_BUNDLE_JSON)"
