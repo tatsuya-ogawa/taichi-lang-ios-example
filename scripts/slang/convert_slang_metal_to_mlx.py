@@ -422,6 +422,13 @@ def generate_swift_snippet(
     return "\n".join(lines)
 
 
+def metadata_path(path: Path, project_root: Path) -> str:
+    try:
+        return path.relative_to(project_root).as_posix()
+    except ValueError:
+        return str(path)
+
+
 def main() -> None:
     args = parse_args()
     project_root = Path(__file__).resolve().parents[2]
@@ -483,7 +490,7 @@ def main() -> None:
     swift_out.write_text(swift, encoding="utf-8")
 
     metadata = {
-        "metal": str(metal_path),
+        "metal": metadata_path(metal_path, project_root),
         "entry": selected.name,
         "kernel_name": kernel_name,
         "kernel_var": kernel_var,
@@ -494,7 +501,7 @@ def main() -> None:
         "buffer_parameters": io_details,
         "attribute_aliases": aliases,
         "line_directives_kept": bool(args.keep_line_directives),
-        "swift_out": str(swift_out),
+        "swift_out": metadata_path(swift_out, project_root),
     }
 
     if args.json_out:
