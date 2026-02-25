@@ -1,5 +1,4 @@
 {
-  "metal": "/Users/tatsuyaogawa/Desktop/taichi-lang-ios-example/build/slang_verify/run_backward_custom.metal",
   "entry": "run_backward_custom",
   "kernel_name": "mnist_slang_feature_transform",
   "kernel_var": "run_backward_customKernel",
@@ -28,6 +27,5 @@
   "attribute_aliases": [
     "uint3 tid_0 = thread_position_in_grid;"
   ],
-  "line_directives_kept": false,
-  "swift_out": "/Users/tatsuyaogawa/Desktop/taichi-lang-ios-example/build/slang_verify/run_backward_custom_mlx.swift"
+  "line_directives_kept": false
 }
